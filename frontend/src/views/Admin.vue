@@ -3,6 +3,7 @@ import { onMounted } from 'vue';
 import { useI18n } from 'vue-i18n'
 
 import { useGlobalState } from '../store'
+import { api } from '../api'
 
 import SenderAccess from './admin/SenderAccess.vue'
 import Statistics from "./admin/Statistics.vue"
@@ -19,9 +20,11 @@ import Maintenance from './admin/Maintenance.vue';
 import Appearance from './common/Appearance.vue';
 import Telegram from './admin/Telegram.vue';
 import Webhook from './admin/Webhook.vue';
+import MailWebhook from './admin/MailWebhook.vue';
 
 const {
-  adminAuth, showAdminAuth, adminTab, loading, globalTabplacement
+  adminAuth, showAdminAuth, adminTab, loading,
+  globalTabplacement, showAdminPage, userSettings
 } = useGlobalState()
 const message = useMessage()
 
@@ -49,12 +52,13 @@ const { t } = useI18n({
       senderAccess: 'Sender Access Control',
       sendBox: 'Send Box',
       telegram: 'Telegram Bot',
-      webhook: 'Webhook',
+      webhookSettings: 'Webhook Settings',
       statistics: 'Statistics',
       maintenance: 'Maintenance',
       appearance: 'Appearance',
       about: 'About',
       ok: 'OK',
+      mailWebhook: 'Mail Webhook',
     },
     zh: {
       accessHeader: 'Admin 密码',
@@ -70,21 +74,24 @@ const { t } = useI18n({
       senderAccess: '发件权限控制',
       sendBox: '发件箱',
       telegram: '电报机器人',
-      webhook: 'Webhook',
+      webhookSettings: 'Webhook 设置',
       statistics: '统计',
       maintenance: '维护',
       appearance: '外观',
       about: '关于',
       ok: '确定',
+      mailWebhook: '邮件 Webhook',
     }
   }
 });
 
 onMounted(async () => {
-  if (!adminAuth.value) {
+  if (!showAdminPage.value) {
     showAdminAuth.value = true;
     return;
   }
+  // make sure user_id is fetched
+  if (!userSettings.value.user_id) await api.getUserSettings(message);
 })
 </script>
 
@@ -100,7 +107,7 @@ onMounted(async () => {
         </n-button>
       </template>
     </n-modal>
-    <n-tabs type="card" v-model:value="adminTab" :placement="globalTabplacement">
+    <n-tabs v-if="showAdminPage" type="card" v-model:value="adminTab" :placement="globalTabplacement">
       <n-tab-pane name="account" :tab="t('account')">
         <n-tabs type="bar" animated>
           <n-tab-pane name="account" :tab="t('account')">
@@ -115,7 +122,7 @@ onMounted(async () => {
           <n-tab-pane name="senderAccess" :tab="t('senderAccess')">
             <SenderAccess />
           </n-tab-pane>
-          <n-tab-pane name="webhook" :tab="t('webhook')">
+          <n-tab-pane name="webhook" :tab="t('webhookSettings')">
             <Webhook />
           </n-tab-pane>
         </n-tabs>
@@ -137,6 +144,9 @@ onMounted(async () => {
           </n-tab-pane>
           <n-tab-pane name="unknow" :tab="t('unknow')">
             <MailsUnknow />
+          </n-tab-pane>
+          <n-tab-pane name="mailWebhook" :tab="t('mailWebhook')">
+            <MailWebhook />
           </n-tab-pane>
         </n-tabs>
       </n-tab-pane>

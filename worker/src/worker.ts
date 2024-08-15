@@ -1,10 +1,7 @@
-import { Hono } from 'hono'
+import { Context, Hono } from 'hono'
 import { cors } from 'hono/cors';
 import { jwt } from 'hono/jwt'
 import { Jwt } from 'hono/utils/jwt'
-
-// @ts-ignore
-import { api as apiV1 } from './deprecated';
 
 import { api as commonApi } from './commom_api';
 import { api as mailsApi } from './mails_api'
@@ -16,11 +13,16 @@ import { api as telegramApi } from './telegram_api'
 import { email } from './email';
 import { scheduled } from './scheduled';
 import { getAdminPasswords, getPasswords, getBooleanValue } from './utils';
-import { HonoCustomType } from './types';
+import { HonoCustomType, UserPayload } from './types';
 
 const app = new Hono<HonoCustomType>()
 //cors
 app.use('/*', cors());
+// error handler
+app.onError((err, c) => {
+	console.error(err)
+	return c.text(`${err.name} ${err.message}`, 500)
+})
 // rate limit
 app.use('/*', async (c, next) => {
 	if (
@@ -53,6 +55,46 @@ app.use('/*', async (c, next) => {
 	}
 	await next()
 });
+
+const checkUserPayload = async (
+	c: Context<HonoCustomType>
+): Promise<void> => {
+	try {
+		const token = c.req.raw.headers.get("x-user-token");
+		if (!token) return;
+		const payload = await Jwt.verify(token, c.env.JWT_SECRET, "HS256");
+		// check expired
+		if (!payload.exp) return;
+		// exp is in seconds
+		if (payload.exp < Math.floor(Date.now() / 1000)) {
+			return;
+		}
+		c.set("userPayload", payload as UserPayload);
+	} catch (e) {
+		console.error(e);
+	}
+}
+
+const checkoutUserRolePayload = async (
+	c: Context<HonoCustomType>
+): Promise<void> => {
+	try {
+		const token = c.req.raw.headers.get("x-user-access-token");
+		if (!token) return;
+		const payload = await Jwt.verify(token, c.env.JWT_SECRET, "HS256");
+		// check expired
+		if (!payload.exp) return;
+		// exp is in seconds
+		if (payload.exp < Math.floor(Date.now() / 1000)) {
+			return;
+		}
+		if (typeof payload?.user_role !== "string") return;
+		c.set("userRolePayload", payload.user_role);
+	} catch (e) {
+		console.error(e);
+	}
+}
+
 // api auth
 app.use('/api/*', async (c, next) => {
 	// check header x-custom-auth
@@ -64,8 +106,14 @@ app.use('/api/*', async (c, next) => {
 		}
 	}
 	if (c.req.path.startsWith("/api/new_address")) {
+		await checkUserPayload(c);
 		await next();
 		return;
+	}
+	if (c.req.path.startsWith("/api/settings")
+		|| c.req.path.startsWith("/api/send_mail")
+	) {
+		await checkoutUserRolePayload(c);
 	}
 	return jwt({ secret: c.env.JWT_SECRET, alg: "HS256" })(c, next);
 });
@@ -76,6 +124,7 @@ app.use('/user_api/*', async (c, next) => {
 		|| c.req.path.startsWith("/user_api/register")
 		|| c.req.path.startsWith("/user_api/login")
 		|| c.req.path.startsWith("/user_api/verify_code")
+		|| c.req.path.startsWith("/user_api/passkey/authenticate_")
 	) {
 		await next();
 		return;
@@ -90,7 +139,7 @@ app.use('/user_api/*', async (c, next) => {
 		if (payload.exp < Math.floor(Date.now() / 1000)) {
 			return c.text("Token Expired", 401)
 		}
-		c.set("userPayload", payload);
+		c.set("userPayload", payload as UserPayload);
 	} catch (e) {
 		console.error(e);
 		return c.text("Need User Token", 401)
@@ -104,6 +153,7 @@ app.use('/user_api/*', async (c, next) => {
 });
 // admin auth
 app.use('/admin/*', async (c, next) => {
+
 	// check header x-admin-auth
 	const adminPasswords = getAdminPasswords(c);
 	if (adminPasswords && adminPasswords.length > 0) {
@@ -113,6 +163,33 @@ app.use('/admin/*', async (c, next) => {
 			return;
 		}
 	}
+	// check if user is admin
+	const access_token = c.req.raw.headers.get("x-user-access-token");
+	if (c.env.ADMIN_USER_ROLE && access_token) {
+		try {
+			const payload = await Jwt.verify(access_token, c.env.JWT_SECRET, "HS256");
+			// check expired
+			if (!payload.exp) return c.text("Invalid Token", 401);
+			// exp is in seconds
+			if (payload.exp < Math.floor(Date.now() / 1000)) {
+				return c.text("Token Expired", 401)
+			}
+			if (payload.user_role !== c.env.ADMIN_USER_ROLE) {
+				return c.text("Need Admin Role", 401)
+			}
+			await next();
+			return;
+		} catch (e) {
+			console.error(e);
+		}
+	}
+
+	// disable admin api check
+	if (getBooleanValue(c.env.DISABLE_ADMIN_PASSWORD_CHECK)) {
+		await next();
+		return;
+	}
+
 	return c.text("Need Admin Password", 401)
 });
 
@@ -121,7 +198,6 @@ app.route('/', commonApi)
 app.route('/', mailsApi)
 app.route('/', userApi)
 app.route('/', adminApi)
-app.route('/', apiV1)
 app.route('/', apiSendMail)
 app.route('/', telegramApi)
 

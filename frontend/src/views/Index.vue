@@ -29,6 +29,7 @@ const { t } = useI18n({
       about: 'About',
       s3Attachment: 'S3 Attachment',
       saveToS3Success: 'save to s3 success',
+      webhookSettings: 'Webhook Settings',
     },
     zh: {
       mailbox: '收件箱',
@@ -39,6 +40,7 @@ const { t } = useI18n({
       about: '关于',
       s3Attachment: 'S3附件',
       saveToS3Success: '保存到s3成功',
+      webhookSettings: 'Webhook 设置',
     }
   }
 });
@@ -49,6 +51,10 @@ const fetchMailData = async (limit, offset) => {
 
 const deleteMail = async (curMailId) => {
   await api.fetch(`/api/mails/${curMailId}`, { method: 'DELETE' });
+};
+
+const deleteSenboxMail = async (curMailId) => {
+  await api.fetch(`/api/sendbox/${curMailId}`, { method: 'DELETE' });
 };
 
 const fetchSenboxData = async (limit, offset) => {
@@ -86,7 +92,8 @@ const saveToS3 = async (mail_id, filename, blob) => {
           :deleteMail="deleteMail" />
       </n-tab-pane>
       <n-tab-pane name="sendbox" :tab="t('sendbox')">
-        <SendBox :fetchMailData="fetchSenboxData" />
+        <SendBox :fetchMailData="fetchSenboxData" :enableUserDeleteEmail="openSettings.enableUserDeleteEmail"
+          :deleteMail="deleteSenboxMail" />
       </n-tab-pane>
       <n-tab-pane name="sendmail" :tab="t('sendmail')">
         <SendMail />
@@ -97,7 +104,7 @@ const saveToS3 = async (mail_id, filename, blob) => {
       <n-tab-pane v-if="openSettings.enableAutoReply" name="auto_reply" :tab="t('auto_reply')">
         <AutoReply />
       </n-tab-pane>
-      <n-tab-pane v-if="openSettings.enableWebhook" name="webhook" :tab="t('webhook')">
+      <n-tab-pane v-if="openSettings.enableWebhook" name="webhook" :tab="t('webhookSettings')">
         <Webhook />
       </n-tab-pane>
       <n-tab-pane v-if="openSettings.isS3Enabled" name="s3_attachment" :tab="t('s3Attachment')">

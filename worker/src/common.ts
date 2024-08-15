@@ -1,18 +1,38 @@
 import { Context } from 'hono';
 import { Jwt } from 'hono/utils/jwt'
 
-import { getBooleanValue, getDomains, getStringValue, getIntValue } from './utils';
-import { HonoCustomType } from './types';
+import { getBooleanValue, getDomains, getStringValue, getIntValue, getUserRoles, getDefaultDomains } from './utils';
+import { HonoCustomType, UserRole } from './types';
 import { unbindTelegramByAddress } from './telegram_api/common';
+import { CONSTANTS } from './constants';
+import { AdminWebhookSettings, WebhookMail, WebhookSettings } from './models';
+
+const DEFAULT_NAME_REGEX = /[^a-z0-9]/g;
+
+const getNameRegex = (c: Context<HonoCustomType>): RegExp => {
+    try {
+        const regex = getStringValue(c.env.ADDRESS_REGEX);
+        if (!regex) {
+            return DEFAULT_NAME_REGEX;
+        }
+        return new RegExp(regex, 'g');
+    }
+    catch (e) {
+        console.error("Failed to get address regex", e);
+    }
+    return DEFAULT_NAME_REGEX;
+}
 
 export const newAddress = async (
     c: Context<HonoCustomType>,
     name: string, domain: string | undefined | null,
     enablePrefix: boolean,
-    checkLengthByConfig: boolean = true
+    checkLengthByConfig: boolean = true,
+    addressPrefix: string | undefined | null = null,
+    checkAllowDomains: boolean = true
 ): Promise<{ address: string, jwt: string }> => {
     // remove special characters
-    name = name.replace(/[^a-zA-Z0-9.]/g, '')
+    name = name.replace(getNameRegex(c), '')
     // name min length min 1
     const minAddressLength = Math.max(
         checkLengthByConfig ? getIntValue(c.env.MIN_ADDRESS_LEN, 1) : 1,
@@ -30,14 +50,21 @@ export const newAddress = async (
     if (name.length > maxAddressLength) {
         throw new Error(`Name too long (max ${maxAddressLength})`);
     }
-    // create address
-    if (enablePrefix) {
+    // create address with prefix
+    if (typeof addressPrefix === "string") {
+        name = addressPrefix + name;
+    } else if (enablePrefix) {
         name = getStringValue(c.env.PREFIX) + name;
     }
-    // check domain, generate random domain
-    const domains = getDomains(c);
-    if (!domain || !domains.includes(domain)) {
-        domain = domains[Math.floor(Math.random() * domains.length)];
+    // check domain
+    const allowDomains = checkAllowDomains ? await getAllowDomains(c) : getDomains(c);
+    // if domain is not set, use the first domain
+    if (!domain && allowDomains.length > 0) {
+        domain = allowDomains[0];
+    }
+    // check domain is valid
+    if (!domain || !allowDomains.includes(domain)) {
+        throw new Error("Invalid domain")
     }
     // create address
     name = name + "@" + domain;
@@ -74,7 +101,7 @@ export const cleanup = async (
     cleanType: string | undefined | null,
     cleanDays: number | undefined | null
 ): Promise<boolean> => {
-    if (!cleanType || !cleanDays || cleanDays < 0 || cleanDays > 30) {
+    if (!cleanType || typeof cleanDays !== 'number' || cleanDays < 0 || cleanDays > 30) {
         throw new Error("Invalid cleanType or cleanDays")
     }
     console.log(`Cleanup ${cleanType} before ${cleanDays} days`);
@@ -216,4 +243,108 @@ export const commonParseMail = async (raw_mail: string | undefined | null): Prom
         console.error("Failed use PostalMime to parse email", e);
     }
     return undefined;
+}
+
+export const commonGetUserRole = async (
+    c: Context<HonoCustomType>, user_id: number
+): Promise<UserRole | undefined | null> => {
+    const user_roles = getUserRoles(c);
+    const role_text = await c.env.DB.prepare(
+        `SELECT role_text FROM user_roles where user_id = ?`
+    ).bind(user_id).first<string | undefined | null>("role_text");
+    return role_text ? user_roles.find((r) => r.role === role_text) : null;
+}
+
+export const getAddressPrefix = async (c: Context<HonoCustomType>): Promise<string | undefined> => {
+    const user = c.get("userPayload");
+    if (!user) {
+        return c.env.PREFIX;
+    }
+    const user_role = await commonGetUserRole(c, user.user_id);
+    if (typeof user_role?.prefix === "string") {
+        return user_role.prefix;
+    }
+    return c.env.PREFIX;
+}
+
+export const getAllowDomains = async (c: Context<HonoCustomType>): Promise<string[]> => {
+    const user = c.get("userPayload");
+    if (!user) {
+        return getDefaultDomains(c);
+    }
+    const user_role = await commonGetUserRole(c, user.user_id);
+    return user_role?.domains || getDefaultDomains(c);;
+}
+
+export async function sendWebhook(settings: WebhookSettings, formatMap: WebhookMail): Promise<{ success: boolean, message?: string }> {
+    // send webhook
+    let body = settings.body;
+    for (const key of Object.keys(formatMap)) {
+        /* eslint-disable no-useless-escape */
+        body = body.replace(
+            new RegExp(`\\$\\{${key}\\}`, "g"),
+            JSON.stringify(
+                formatMap[key as keyof WebhookMail]
+            ).replace(/^"(.*)"$/, '\$1')
+        );
+        /* eslint-enable no-useless-escape */
+    }
+    const response = await fetch(settings.url, {
+        method: settings.method,
+        headers: JSON.parse(settings.headers),
+        body: body
+    });
+    if (!response.ok) {
+        console.log("send webhook error", response.status, response.statusText);
+        return { success: false, message: `send webhook error: ${response.status} ${response.statusText}` };
+    }
+    return { success: true }
+}
+
+export async function triggerWebhook(
+    c: Context<HonoCustomType>,
+    address: string,
+    raw_mail: string
+): Promise<void> {
+    if (!c.env.KV || !getBooleanValue(c.env.ENABLE_WEBHOOK)) {
+        return
+    }
+    const webhookList: WebhookSettings[] = []
+
+    // admin mail webhook
+    const adminMailWebhookSettings = await c.env.KV.get<WebhookSettings>(CONSTANTS.WEBHOOK_KV_ADMIN_MAIL_SETTINGS_KEY, "json");
+    if (adminMailWebhookSettings?.enabled) {
+        webhookList.push(adminMailWebhookSettings)
+    }
+
+    // user mail webhook
+    const adminSettings = await c.env.KV.get<AdminWebhookSettings>(CONSTANTS.WEBHOOK_KV_SETTINGS_KEY, "json");
+    if (adminSettings?.allowList.includes(address)) {
+        const settings = await c.env.KV.get<WebhookSettings>(
+            `${CONSTANTS.WEBHOOK_KV_USER_SETTINGS_KEY}:${address}`, "json"
+        );
+        if (settings?.enabled) {
+            webhookList.push(settings)
+        }
+    }
+
+    // no webhook
+    if (webhookList.length === 0) {
+        return
+    }
+    const parsedEmail = await commonParseMail(raw_mail);
+    const webhookMail = {
+        from: parsedEmail?.sender || "",
+        to: address,
+        subject: parsedEmail?.subject || "",
+        raw: raw_mail,
+        parsedText: parsedEmail?.text || "",
+        parsedHtml: parsedEmail?.html || ""
+    }
+    for (const settings of webhookList) {
+        const res = await sendWebhook(settings, webhookMail);
+        if (!res.success) {
+            console.error(res.message);
+        }
+    }
 }

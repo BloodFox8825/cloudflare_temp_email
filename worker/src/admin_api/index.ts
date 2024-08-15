@@ -2,12 +2,13 @@ import { Hono } from 'hono'
 import { Jwt } from 'hono/utils/jwt'
 
 import { HonoCustomType } from '../types'
-import { sendAdminInternalMail, getJsonSetting, saveSetting } from '../utils'
+import { sendAdminInternalMail, getJsonSetting, saveSetting, getUserRoles } from '../utils'
 import { newAddress, handleListQuery } from '../common'
 import { CONSTANTS } from '../constants'
 import cleanup_api from './cleanup_api'
 import admin_user_api from './admin_user_api'
 import webhook_settings from './webhook_settings'
+import mail_webhook_settings from './mail_webhook_settings'
 
 export const api = new Hono<HonoCustomType>()
 
@@ -40,7 +41,7 @@ api.post('/admin/new_address', async (c) => {
         return c.text("Please provide a name", 400)
     }
     try {
-        const res = await newAddress(c, name, domain, enablePrefix, false);
+        const res = await newAddress(c, name, domain, enablePrefix, false, null, false);
         return c.json(res);
     } catch (e) {
         return c.text(`Failed create address: ${(e as Error).message}`, 400)
@@ -127,6 +128,16 @@ api.get('/admin/mails_unknow', async (c) => {
     );
 });
 
+api.delete('/admin/mails/:id', async (c) => {
+    const { id } = c.req.param();
+    const { success } = await c.env.DB.prepare(
+        `DELETE FROM raw_mails WHERE id = ? `
+    ).bind(id).run();
+    return c.json({
+        success: success
+    })
+})
+
 api.get('/admin/address_sender', async (c) => {
     const { address, limit, offset } = c.req.query();
     if (address) {
@@ -166,6 +177,16 @@ api.post('/admin/address_sender', async (c) => {
     })
 })
 
+api.delete('/admin/address_sender/:id', async (c) => {
+    const { id } = c.req.param();
+    const { success } = await c.env.DB.prepare(
+        `DELETE FROM address_sender WHERE id = ? `
+    ).bind(id).run();
+    return c.json({
+        success: success
+    })
+})
+
 api.get('/admin/sendbox', async (c) => {
     const { address, limit, offset } = c.req.query();
     if (address) {
@@ -182,6 +203,16 @@ api.get('/admin/sendbox', async (c) => {
     );
 })
 
+api.delete('/admin/sendbox/:id', async (c) => {
+    const { id } = c.req.param();
+    const { success } = await c.env.DB.prepare(
+        `DELETE FROM sendbox WHERE id = ? `
+    ).bind(id).run();
+    return c.json({
+        success: success
+    })
+})
+
 api.get('/admin/statistics', async (c) => {
     const { count: mailCount } = await c.env.DB.prepare(
         `SELECT count(*) as count FROM raw_mails`
@@ -189,16 +220,24 @@ api.get('/admin/statistics', async (c) => {
     const { count: addressCount } = await c.env.DB.prepare(
         `SELECT count(*) as count FROM address`
     ).first<{ count: number }>() || {};
-    const { count: activeUserCount7days } = await c.env.DB.prepare(
+    const { count: activeAddressCount7days } = await c.env.DB.prepare(
         `SELECT count(*) as count FROM address where updated_at > datetime('now', '-7 day')`
+    ).first<{ count: number }>() || {};
+    const { count: activeAddressCount30days } = await c.env.DB.prepare(
+        `SELECT count(*) as count FROM address where updated_at > datetime('now', '-30 day')`
     ).first<{ count: number }>() || {};
     const { count: sendMailCount } = await c.env.DB.prepare(
         `SELECT count(*) as count FROM sendbox`
     ).first<{ count: number }>() || {};
+    const { count: userCount } = await c.env.DB.prepare(
+        `SELECT count(*) as count FROM users`
+    ).first<{ count: number }>() || {};
     return c.json({
         mailCount: mailCount,
-        userCount: addressCount,
-        activeUserCount7days: activeUserCount7days,
+        addressCount: addressCount,
+        activeAddressCount7days: activeAddressCount7days,
+        activeAddressCount30days: activeAddressCount30days,
+        userCount: userCount,
         sendMailCount: sendMailCount
     })
 });
@@ -208,10 +247,12 @@ api.get('/admin/account_settings', async (c) => {
         const blockList = await getJsonSetting(c, CONSTANTS.ADDRESS_BLOCK_LIST_KEY);
         const sendBlockList = await getJsonSetting(c, CONSTANTS.SEND_BLOCK_LIST_KEY);
         const verifiedAddressList = await getJsonSetting(c, CONSTANTS.VERIFIED_ADDRESS_LIST_KEY);
+        const fromBlockList = c.env.KV ? await c.env.KV.get<string[]>(CONSTANTS.EMAIL_KV_BLACK_LIST, 'json') : [];
         return c.json({
             blockList: blockList || [],
             sendBlockList: sendBlockList || [],
-            verifiedAddressList: verifiedAddressList || []
+            verifiedAddressList: verifiedAddressList || [],
+            fromBlockList: fromBlockList || []
         })
     } catch (error) {
         console.error(error);
@@ -221,7 +262,7 @@ api.get('/admin/account_settings', async (c) => {
 
 api.post('/admin/account_settings', async (c) => {
     /** @type {{ blockList: Array<string>, sendBlockList: Array<string> }} */
-    const { blockList, sendBlockList, verifiedAddressList } = await c.req.json();
+    const { blockList, sendBlockList, verifiedAddressList, fromBlockList } = await c.req.json();
     if (!blockList || !sendBlockList || !verifiedAddressList) {
         return c.text("Invalid blockList or sendBlockList", 400)
     }
@@ -240,19 +281,37 @@ api.post('/admin/account_settings', async (c) => {
         c, CONSTANTS.VERIFIED_ADDRESS_LIST_KEY,
         JSON.stringify(verifiedAddressList)
     )
+    if (fromBlockList?.length > 0 && !c.env.KV) {
+        return c.text("Please enable KV to use fromBlockList", 400)
+    }
+    if (fromBlockList) {
+        await c.env.KV.put(CONSTANTS.EMAIL_KV_BLACK_LIST, JSON.stringify(fromBlockList || []))
+    }
     return c.json({
         success: true
     })
 })
 
+// cleanup
 api.post('/admin/cleanup', cleanup_api.cleanup)
 api.get('/admin/auto_cleanup', cleanup_api.getCleanup)
 api.post('/admin/auto_cleanup', cleanup_api.saveCleanup)
+
+// user settings
 api.get('/admin/user_settings', admin_user_api.getSetting)
 api.post('/admin/user_settings', admin_user_api.saveSetting)
 api.get('/admin/users', admin_user_api.getUsers)
 api.delete('/admin/users/:user_id', admin_user_api.deleteUser)
 api.post('/admin/users', admin_user_api.createUser)
 api.post('/admin/users/:user_id/reset_password', admin_user_api.resetPassword)
+api.get('/admin/user_roles', async (c) => c.json(getUserRoles(c)))
+api.post('/admin/user_roles', admin_user_api.updateUserRoles)
+
+// webhook settings
 api.get("/admin/webhook/settings", webhook_settings.getWebhookSettings);
 api.post("/admin/webhook/settings", webhook_settings.saveWebhookSettings);
+
+// mail webhook settings
+api.get("/admin/mail_webhook/settings", mail_webhook_settings.getWebhookSettings);
+api.post("/admin/mail_webhook/settings", mail_webhook_settings.saveWebhookSettings);
+api.post("/admin/mail_webhook/test", mail_webhook_settings.testWebhookSettings);
