@@ -46,7 +46,9 @@ node_compat = true
 PREFIX = "tmp" # 要处理的邮箱名称前缀，不需要后缀可配置为空字符串
 # (min, max) adderss的长度，如果不设置，默认为(1, 30)
 # ANNOUNCEMENT = "Custom Announcement" # 自定义公告
-# address name 的正则表达式，如果不设置，默认为 [^a-z0-9], 需谨慎使用, 有些符号可能导致无法收件
+# address name 的正则表达式, 只用于检查，符合条件将通过检查
+# ADDRESS_CHECK_REGEX = "^(?!.*admin).*"
+# address name 替换非法符号的正则表达式, 不在其中的符号将被替换，如果不设置，默认为 [^a-z0-9], 需谨慎使用, 有些符号可能导致无法收件
 # ADDRESS_REGEX = "[^a-z0-9]"
 # MIN_ADDRESS_LEN = 1
 # MAX_ADDRESS_LEN = 30
@@ -93,8 +95,12 @@ ENABLE_AUTO_REPLY = false
 # CF_TURNSTILE_SECRET_KEY = ""
 # telegram bot 最多绑定邮箱数量
 # TG_MAX_ADDRESS = 5
+# telegram BOT_INFO，预定义的 BOT_INFO 可以降低 webhook 的延迟
+# TG_BOT_INFO = "{}"
 # 全局转发地址列表，如果不配置则不启用，启用后所有邮件都会转发到列表中的地址
 # FORWARD_ADDRESS_LIST = ["xxx@xxx.com"]
+# 前端地址，用于发送 webhook 的邮件 url
+# FRONTEND_URL = "https://xxxx.xxx"
 
 # D1 数据库的名称和 ID 可以在 cloudflare 控制台查看
 [[d1_databases]]

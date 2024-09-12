@@ -15,6 +15,7 @@ export type Bindings = {
     TITLE: string | undefined
     ANNOUNCEMENT: string | undefined | null
     PREFIX: string | undefined
+    ADDRESS_CHECK_REGEX: string | undefined
     ADDRESS_REGEX: string | undefined
     MIN_ADDRESS_LEN: string | number | undefined
     MAX_ADDRESS_LEN: string | number | undefined
@@ -59,6 +60,10 @@ export type Bindings = {
     // telegram config
     TELEGRAM_BOT_TOKEN: string
     TG_MAX_ADDRESS: number | undefined
+    TG_BOT_INFO: string | object | undefined
+
+    // webhook config
+    FRONTEND_URL: string | undefined
 }
 
 type JwtPayload = {

@@ -32,6 +32,15 @@ api.get('/api/mails', async (c) => {
     );
 })
 
+api.get('/api/mail/:mail_id', async (c) => {
+    const { address } = c.get("jwtPayload")
+    const { mail_id } = c.req.param();
+    const result = await c.env.DB.prepare(
+        `SELECT * FROM raw_mails where id = ? and address = ?`
+    ).bind(mail_id, address).first();
+    return c.json(result);
+})
+
 api.delete('/api/mails/:id', async (c) => {
     if (!getBooleanValue(c.env.ENABLE_USER_DELETE_EMAIL)) {
         return c.text("User delete email is disabled", 403)
@@ -121,7 +130,12 @@ api.post('/api/new_address', async (c) => {
     }
     try {
         const addressPrefix = await getAddressPrefix(c);
-        const res = await newAddress(c, name, domain, true, true, addressPrefix);
+        const res = await newAddress(c, {
+            name, domain,
+            enablePrefix: true,
+            checkLengthByConfig: true,
+            addressPrefix
+        });
         return c.json(res);
     } catch (e) {
         return c.text(`Failed create address: ${(e as Error).message}`, 400)

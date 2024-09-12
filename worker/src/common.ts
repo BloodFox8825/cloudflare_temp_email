@@ -1,13 +1,31 @@
 import { Context } from 'hono';
 import { Jwt } from 'hono/utils/jwt'
 
-import { getBooleanValue, getDomains, getStringValue, getIntValue, getUserRoles, getDefaultDomains } from './utils';
+import { getBooleanValue, getDomains, getStringValue, getIntValue, getUserRoles, getDefaultDomains, getJsonSetting } from './utils';
 import { HonoCustomType, UserRole } from './types';
 import { unbindTelegramByAddress } from './telegram_api/common';
 import { CONSTANTS } from './constants';
 import { AdminWebhookSettings, WebhookMail, WebhookSettings } from './models';
 
 const DEFAULT_NAME_REGEX = /[^a-z0-9]/g;
+
+const checkNameRegex = (c: Context<HonoCustomType>, name: string) => {
+    let error = null;
+    try {
+        const regexStr = getStringValue(c.env.ADDRESS_CHECK_REGEX);
+        if (!regexStr) return;
+        const regex = new RegExp(regexStr);
+        if (!regex.test(name)) {
+            error = new Error(`Name not match regex: /${regexStr}/`);
+        }
+    }
+    catch (e) {
+        console.error("Failed to check address regex", e);
+    }
+    if (error) {
+        throw error;
+    }
+}
 
 const getNameRegex = (c: Context<HonoCustomType>): RegExp => {
     try {
@@ -25,14 +43,30 @@ const getNameRegex = (c: Context<HonoCustomType>): RegExp => {
 
 export const newAddress = async (
     c: Context<HonoCustomType>,
-    name: string, domain: string | undefined | null,
-    enablePrefix: boolean,
-    checkLengthByConfig: boolean = true,
-    addressPrefix: string | undefined | null = null,
-    checkAllowDomains: boolean = true
+    {
+        name,
+        domain,
+        enablePrefix,
+        checkLengthByConfig = true,
+        addressPrefix = null,
+        checkAllowDomains = true,
+        enableCheckNameRegex = true,
+    }: {
+        name: string, domain: string | undefined | null,
+        enablePrefix: boolean,
+        checkLengthByConfig?: boolean,
+        addressPrefix?: string | undefined | null,
+        checkAllowDomains?: boolean,
+        enableCheckNameRegex?: boolean,
+    }
 ): Promise<{ address: string, jwt: string }> => {
     // remove special characters
     name = name.replace(getNameRegex(c), '')
+    // check name
+    if (enableCheckNameRegex) {
+        await checkNameBlockList(c, name);
+        checkNameRegex(c, name);
+    }
     // name min length min 1
     const minAddressLength = Math.max(
         checkLengthByConfig ? getIntValue(c.env.MIN_ADDRESS_LEN, 1) : 1,
@@ -93,6 +127,22 @@ export const newAddress = async (
     return {
         jwt: jwt,
         address: name,
+    }
+}
+
+const checkNameBlockList = async (
+    c: Context<HonoCustomType>, name: string
+): Promise<void> => {
+    // check name block list
+    const blockList = [] as string[];
+    try {
+        const value = await getJsonSetting(c, CONSTANTS.ADDRESS_BLOCK_LIST_KEY);
+        blockList.push(...(value || []));
+    } catch (error) {
+        console.error(error);
+    }
+    if (blockList.some((item) => name.includes(item))) {
+        throw new Error(`Name[${name}]is blocked`);
     }
 }
 
@@ -289,6 +339,7 @@ export async function sendWebhook(settings: WebhookSettings, formatMap: WebhookM
         );
         /* eslint-enable no-useless-escape */
     }
+    console.log("send webhook", settings.url, settings.method, settings.headers, body);
     const response = await fetch(settings.url, {
         method: settings.method,
         headers: JSON.parse(settings.headers),
@@ -304,7 +355,8 @@ export async function sendWebhook(settings: WebhookSettings, formatMap: WebhookM
 export async function triggerWebhook(
     c: Context<HonoCustomType>,
     address: string,
-    raw_mail: string
+    raw_mail: string,
+    message_id: string | null
 ): Promise<void> {
     if (!c.env.KV || !getBooleanValue(c.env.ENABLE_WEBHOOK)) {
         return
@@ -332,8 +384,14 @@ export async function triggerWebhook(
     if (webhookList.length === 0) {
         return
     }
+    const mailId = await c.env.DB.prepare(
+        `SELECT id FROM raw_mails where address = ? and message_id = ?`
+    ).bind(address, message_id).first<string>("id");
+
     const parsedEmail = await commonParseMail(raw_mail);
     const webhookMail = {
+        id: mailId || "",
+        url: c.env.FRONTEND_URL ? `${c.env.FRONTEND_URL}?mail_id=${mailId}` : "",
         from: parsedEmail?.sender || "",
         to: address,
         subject: parsedEmail?.subject || "",

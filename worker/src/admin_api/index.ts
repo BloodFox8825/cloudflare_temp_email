@@ -9,6 +9,8 @@ import cleanup_api from './cleanup_api'
 import admin_user_api from './admin_user_api'
 import webhook_settings from './webhook_settings'
 import mail_webhook_settings from './mail_webhook_settings'
+import oauth2_settings from './oauth2_settings'
+import worker_config from './worker_config'
 
 export const api = new Hono<HonoCustomType>()
 
@@ -41,7 +43,13 @@ api.post('/admin/new_address', async (c) => {
         return c.text("Please provide a name", 400)
     }
     try {
-        const res = await newAddress(c, name, domain, enablePrefix, false, null, false);
+        const res = await newAddress(c, {
+            name, domain, enablePrefix,
+            checkLengthByConfig: false,
+            addressPrefix: null,
+            checkAllowDomains: false,
+            enableCheckNameRegex: false,
+        });
         return c.json(res);
     } catch (e) {
         return c.text(`Failed create address: ${(e as Error).message}`, 400)
@@ -307,6 +315,10 @@ api.post('/admin/users/:user_id/reset_password', admin_user_api.resetPassword)
 api.get('/admin/user_roles', async (c) => c.json(getUserRoles(c)))
 api.post('/admin/user_roles', admin_user_api.updateUserRoles)
 
+// user oauth2 settings
+api.get('/admin/user_oauth2_settings', oauth2_settings.getUserOauth2Settings)
+api.post('/admin/user_oauth2_settings', oauth2_settings.saveUserOauth2Settings)
+
 // webhook settings
 api.get("/admin/webhook/settings", webhook_settings.getWebhookSettings);
 api.post("/admin/webhook/settings", webhook_settings.saveWebhookSettings);
@@ -315,3 +327,6 @@ api.post("/admin/webhook/settings", webhook_settings.saveWebhookSettings);
 api.get("/admin/mail_webhook/settings", mail_webhook_settings.getWebhookSettings);
 api.post("/admin/mail_webhook/settings", mail_webhook_settings.saveWebhookSettings);
 api.post("/admin/mail_webhook/test", mail_webhook_settings.testWebhookSettings);
+
+// worker config
+api.get("/admin/worker/configs", worker_config.getConfig);

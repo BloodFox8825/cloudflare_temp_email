@@ -22,6 +22,8 @@ export class AdminWebhookSettings {
 }
 
 export type WebhookMail = {
+    id: string;
+    url?: string;
     from: string;
     to: string;
     subject: string;
@@ -128,6 +130,8 @@ export class WebhookSettings {
         "Content-Type": "application/json"
     }, null, 2)
     body: string = JSON.stringify({
+        "id": "${id}",
+        "url": "${url}",
         "from": "${from}",
         "to": "${to}",
         "subject": "${subject}",
@@ -135,4 +139,20 @@ export class WebhookSettings {
         "parsedText": "${parsedText}",
         "parsedHtml": "${parsedHtml}",
     }, null, 2)
+}
+
+export type UserOauth2Settings = {
+    name: string;
+    clientID: string;
+    clientSecret: string;
+    authorizationURL: string;
+    accessTokenURL: string;
+    accessTokenFormat: string;
+    userInfoURL: string;
+    redirectURL: string;
+    logoutURL?: string;
+    userEmailKey: string;
+    scope: string;
+    enableMailAllowList?: boolean | undefined;
+    mailAllowList?: string[] | undefined;
 }

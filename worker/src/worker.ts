@@ -42,9 +42,11 @@ app.use('/*', async (c, next) => {
 			}
 		}
 	}
+	// webhook check
 	if (
 		c.req.path.startsWith("/api/webhook")
 		|| c.req.path.startsWith("/admin/webhook")
+		|| c.req.path.startsWith("/admin/mail_webhook")
 	) {
 		if (!c.env.KV) {
 			return c.text("KV is not available", 400);
@@ -125,6 +127,7 @@ app.use('/user_api/*', async (c, next) => {
 		|| c.req.path.startsWith("/user_api/login")
 		|| c.req.path.startsWith("/user_api/verify_code")
 		|| c.req.path.startsWith("/user_api/passkey/authenticate_")
+		|| c.req.path.startsWith("/user_api/oauth2")
 	) {
 		await next();
 		return;

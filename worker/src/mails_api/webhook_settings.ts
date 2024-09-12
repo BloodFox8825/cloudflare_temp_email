@@ -7,12 +7,6 @@ import { commonParseMail, sendWebhook } from "../common";
 
 
 async function getWebhookSettings(c: Context<HonoCustomType>): Promise<Response> {
-    if (!c.env.KV) {
-        return c.text("KV is not available", 400);
-    }
-    if (!getBooleanValue(c.env.ENABLE_WEBHOOK)) {
-        return c.text("Webhook is disabled", 403);
-    }
     const { address } = c.get("jwtPayload")
     const adminSettings = await c.env.KV.get<AdminWebhookSettings>(CONSTANTS.WEBHOOK_KV_SETTINGS_KEY, "json");
     if (!adminSettings?.allowList.includes(address)) {
@@ -42,12 +36,14 @@ async function testWebhookSettings(c: Context<HonoCustomType>): Promise<Response
     const settings = await c.req.json<WebhookSettings>();
     const { address } = c.get("jwtPayload");
     // random raw email
-    const raw = await c.env.DB.prepare(
-        `SELECT raw FROM raw_mails WHERE address = ? ORDER BY RANDOM() LIMIT 1`
-    ).bind(address).first<string>("raw");
+    const { id: mailId, raw } = await c.env.DB.prepare(
+        `SELECT id, raw FROM raw_mails WHERE address = ? ORDER BY RANDOM() LIMIT 1`
+    ).bind(address).first<{ id: string, raw: string }>() || {};
 
     const parsedEmail = await commonParseMail(raw);
     const res = await sendWebhook(settings, {
+        id: mailId || "0",
+        url: c.env.FRONTEND_URL ? `${c.env.FRONTEND_URL}?mail_id=${mailId}` : "",
         from: parsedEmail?.sender || "test@test.com",
         to: address,
         subject: parsedEmail?.subject || "test subject",
